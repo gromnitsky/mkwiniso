@@ -16,10 +16,12 @@ $ ./mkwiniso
       mkwiniso add file.xml input.iso output.iso
 ~~~
 
+Tested on Windows 11 24h2, & Windows 10 22h2 .iso.
+
 ## Bugs
 
-* Linux-only
-* Requires root
+* Linux-only.
+* Requires root for all operations, except `mkwiniso generate`.
 
 ## &#x2672; Loicense
 
