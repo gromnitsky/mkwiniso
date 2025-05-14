@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+set -e -o pipefail
+
+usage() {
+    printf "%s\n" "[V=0] mkwiniso generate input-dir output.iso" \
+           "      mkwiniso add file.xml input.iso output.iso"
+    exit 1
+}
+
+V=${V:-1}
+tmp=`mktemp -d /tmp/mkwiniso.XXXXXX`
+log="$tmp/genisoimage.log"      # progress percents
+lower="$tmp/lower"              # UDF read-only mointpoint
+upper="$tmp/upper"
+work="$tmp/work"
+merged="$tmp/merged"
+
+clean() { set +e; umount "$merged" "$lower"; rm -rf "$tmp"; }
+trap 'clean 2>/dev/null' 0 1 2 15
+
+generate() {
+    [ -d "$1" ] || usage; [ -n "$2" ] || usage
+
+    progress() { while read -r line; do [ "$V" = 0 ] || printf '\r%s%%' "$line" 1>&2; done; }
+    extract_percents() { stdbuf -o0 awk -F. '/done,/ {print $1}'; }
+    label() { basename "$1" .iso; }
+
+    iso_generate() {
+        genisoimage -allow-limited-size -iso-level 4 -joliet-long -rock \
+                    -b boot/etfsboot.com -no-emul-boot -boot-load-size 8 \
+                    -eltorito-alt-boot -b efi/microsoft/boot/efisys.bin \
+                    -V "`label "$2"`" -o "$2" "$1" 2>&1 | tee "$log"
+    }
+
+    rm -f "$2"                  # yep
+    iso_generate "$1" "$2" | extract_percents | progress || {
+        [ -r "$log" ] && cat "$log" 1>&2
+        rm -f "$2"
+        exit 1
+    }
+    [ "$V" = 0 ] || printf '\r' 1>&2
+}
+
+add() {
+    [ -f "$1" ] || usage; [ -f "$2" ] || usage; [ -n "$3" ] || usage
+
+    mkdir "$lower" "$upper" "$work" "$merged"
+    mount -t udf "$2" "$lower"
+    mount -t overlay overlay -o lowerdir="$lower",upperdir="$upper",workdir="$work" "$merged"
+    cp "$1" "$merged"/autounattend.xml
+    generate "$merged" "$3"
+    [ "$SUDO_UID" ] && chown "$SUDO_UID:$SUDO_GID" "$3"
+}
+
+eh() { echo "Error: $*" 1>&2; exit 1; }
+
+[ "`uname -s`" = Linux ] || eh not Linux
+type genisoimage stdbuf > /dev/null
+case "$1" in
+    generate) generate "$2" "$3" ;;
+    add)
+        [ "`id -u`" = 0 ] || eh needs root
+        add "$2" "$3" "$4"
+        ;;
+    *) usage ;;
+esac

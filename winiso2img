@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -e
+
+eh() { echo "Error: $*" 1>&2; exit 1; }
+[ "`uname -s`" = Linux ] || eh not Linux
+type parted kpartx mkfs.fat mkfs.ntfs > /dev/null
+
+usage='[V=0] winiso2img win.iso output.img'
+t=${t:-`mktemp -u tmp.winiso2img.XXXXXX`}
+src="$1"; [ -f "$src" ] || eh "$usage"
+dest="$2"; [ -n "$dest" ] || eh "$usage"
+[ "`id -u`" = 0 ] || eh needs root
+V=${V:-1}
+
+clean() {
+    set +e
+    sync # in case of SIGINT, otherwise unmounting may fail. very robust!
+    umount "$t/src" "$t/efi" "$t/setup" 2>/dev/null
+    losetup -d "$lo" 2>/dev/null
+    kpartx -d "$dest" > /dev/null
+    percent
+    [ "$V" = 0 ] || printf '\r' 1>&2
+
+    if [ "$ok" ] ; then
+        rm -rf "$t"
+    else
+        rm -f "$dest"
+        eh "see $log"
+    fi
+}
+trap 'clean' 1 2 15
+
+mkdir -p "$t"
+log="$t/log.txt"
+
+rm -f "$dest"
+truncate -s $((7168+1))M "$dest"
+lo=`losetup -f --show "$dest"`
+parted -s "$lo" mklabel gpt
+parted -s "$lo" mkpart BOOT fat32 0% 1GiB
+parted -s "$lo" set 1 msftdata on
+parted -s "$lo" set 1 no_automount on
+parted -s "$lo" mkpart INSTALL 1GiB 7GiB
+parted -s "$lo" set 2 msftdata on
+partprobe "$lo"
+losetup -d "$lo"
+
+# sets 2 variables: lo_p1, lo_p2
+kpartx -av "$dest" > "$t/kpartx.txt"
+eval "`awk 'BEGIN {p=1} {printf "lo_p%s=/dev/mapper/%s;", p++, $3}' < "$t/kpartx.txt"`"
+[ "$lo_p1" ] || eh kpartx; [ "$lo_p2" ] || eh kpartx
+
+mkfs.fat -F 32 "$lo_p1" > /dev/null
+mkfs.ntfs -f "$lo_p2" > /dev/null
+
+mkdir -p "$t/src"
+mount -t udf -o ro "$src" "$t/src"
+
+# set 2 lists of required files
+files_efi=`find "$t/src" -type f | grep -v /sources/; echo "$t/src/sources/boot.wim"`
+files_setup=`find "$t/src" -type f`
+files_efi_len=`wc -l <<< "$files_efi"`
+files_setup_len=`wc -l <<< "$files_setup"`
+steps_total=$((files_efi_len + files_setup_len + 1)) # +1 for 'clean'
+steps=0
+
+percent() {
+    steps=$((steps+1))
+    [ "$V" = 0 ] || echo $steps $steps_total |
+            awk '{printf "%.2f\n", ($1/$2)*100}' |
+            xargs printf "\r%s%%" 1>&2
+}
+
+copy() {
+    IFS=$'\n'
+    local d
+    for src_file in $1; do
+        d=${src_file/$t\/src\//$2\/}
+        dirname "$d" | xargs -d\\n mkdir -p
+        cp -v --preserve=timestamps "$src_file" "$d" >> "$log" 2>&1 || break 1
+        percent
+    done
+}
+
+# fill efi partition
+mkdir -p "$t/efi"
+mount "$lo_p1" "$t/efi"
+copy "$files_efi" "$t/efi"
+
+# fill setup partition
+mkdir -p "$t/setup"
+mount "$lo_p2" "$t/setup"
+copy "$files_setup" "$t/setup"
+
+ok=1
+# shellcheck disable=SC2153
+[ "$SUDO_UID" ] && chown "$SUDO_UID:$SUDO_GID" "$dest"
+clean
