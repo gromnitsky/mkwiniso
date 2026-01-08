@@ -8,10 +8,9 @@ cc() { for c; do command -v "$c" > /dev/null || { eh "no $c"; }; done; }
 # shellcheck disable=SC2154
 clean() {
     set +e
-    sync                        # unmounting may fail if SIGINT
+    sync                    # otherwise, unmounting may fail if SIGINT
     loop_delete "$lo_src"
-    loop_delete "$lo_part1"
-    rm -f "$part1"
+    loop_delete "$lo_dest"
     [ "$ok" ] || rm -f "$dest"
 }
 
@@ -64,36 +63,14 @@ cc udisksctl mkfs.fat wimlib-imagex sfdisk dialog
 usage='[V=0] winiso2img win.iso output.img'
 src="$1"; [ -f "$src" ] || eh "$usage"
 dest="$2"; [ -n "$dest" ] || eh "$usage"
-part1=`mktemp -u "${dest}.part1.XXXXXX"`
 
 dialog=true; [ "$V" = 0 ] || dialog=dialog
 
 trap clean 0 1 2 15
 
-# STEP 1: create a fat32 partition inside a file
-part1_size=$((1024*1024*1024 * 8))
-mkfs.fat -C "$part1" $((part1_size / 1024)) > /dev/null
-
-# STEP 2: mount Windows .iso and the fat32 partition
-loop_setup "$src" lo_src -r
-loop_setup "$part1" lo_part1
-
-# STEP 3: fat32 doesn't support files > 4GB, hence split `install.wim`
-# shellcheck disable=SC2154
-{
-    mkdir "$lo_part1_mountpoint/sources"
-    [ "$DEBUG" ] ||
-        wimlib-imagex split "$lo_src_mountpoint/sources/install.wim" \
-                      "$lo_part1_mountpoint/sources/install.swm" 3800
-}
-
-# STEP 4: copy the rest of the files to the fat32 partition
-files_src=`find "$lo_src_mountpoint" -type f | grep -v /sources/install.wim`
-copy "$lo_src_mountpoint" "$files_src" "$lo_part1_mountpoint" |
-    $dialog --backtitle winiso2img --keep-tite --gauge "Copying files" 0 0
-
-# STEP 5: create an empty image and partition it
+# STEP 0: create an empty image and partition it
 rm -f "$dest"
+part1_size=$((1024*1024*1024 * 8))
 truncate -s $((part1_size + 2048*512)) "$dest"
 
 sfdisk "$dest" << EOF > /dev/null
@@ -103,8 +80,25 @@ sector-size: 512
 : start=2048, size=$((part1_size / 512)), type=c, bootable
 EOF
 
-# STEP 6: copy the fat32 partition file into the image file
-dd_status=none; [ "$V" = 0 ] || dd_status=progress
-dd if="$part1" of="$dest" conv=notrunc bs=512 seek=2048 status=$dd_status
+# STEP 1: create a fat32 partition inside the image
+mkfs.fat "$dest" -n 'VINDUK' --offset 2048 > /dev/null
+
+# STEP 2: mount Windows .iso and the fat32 partition
+loop_setup "$src" lo_src -r
+loop_setup "$dest" lo_dest -o $((2048*512))
+
+# STEP 3: fat32 doesn't support files > 4GB, hence split `install.wim`
+# shellcheck disable=SC2154
+{
+    mkdir "$lo_dest_mountpoint/sources"
+    [ "$DEBUG" ] ||
+        wimlib-imagex split "$lo_src_mountpoint/sources/install.wim" \
+                      "$lo_dest_mountpoint/sources/install.swm" 3800
+}
+
+# STEP 4: copy the rest of the files to the fat32 partition
+files_src=`find "$lo_src_mountpoint" -type f | grep -v /sources/install.wim`
+copy "$lo_src_mountpoint" "$files_src" "$lo_dest_mountpoint" |
+    $dialog --backtitle winiso2img --keep-tite --gauge "Copying files" 0 0
 
 ok=1
