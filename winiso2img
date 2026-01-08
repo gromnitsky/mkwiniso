@@ -17,10 +17,12 @@ clean() {
 
 loop_setup() {                  # race condition if SIGINT
     local lo mountpoint
-    lo=`udisksctl loop-setup -f "$1" | grep -o '/dev/loop[0-9]*'`
-    eval "$2=$lo"
+    local file="$1" var="$2"
+    shift 2
+    lo=`udisksctl loop-setup -f "$file" "$@" | grep -o '/dev/loop[0-9]*'`
+    eval "$var=$lo"
     mountpoint=`udisksctl mount -b "$lo" | grep -o '/run/media/.*'`
-    eval "$2_mountpoint=$mountpoint"
+    eval "${var}_mountpoint=$mountpoint"
 }
 
 loop_delete() {
@@ -73,7 +75,7 @@ part1_size=$((1024*1024*1024 * 8))
 mkfs.fat -C "$part1" $((part1_size / 1024)) > /dev/null
 
 # STEP 2: mount Windows .iso and the fat32 partition
-loop_setup "$src" lo_src
+loop_setup "$src" lo_src -r
 loop_setup "$part1" lo_part1
 
 # STEP 3: fat32 doesn't support files > 4GB, hence split `install.wim`
