@@ -25,14 +25,13 @@ $ ./mkwiniso
 
 ## Bugs
 
-* Tested merely with Windows 11 25h2 & Windows 10 22h2 ISOs.
+* Tested with Windows 11 26h2 (en_US) only.
 * `mkwiniso add` requires root.
 * Linux-only.
 
 ## See Also
 
-[blockdevrem-select](https://gist.github.com/gromnitsky/d23d5b1760a0659b0d97b47241644fdf),
-[windows-iso-url](https://github.com/gromnitsky/windows-iso-url)
+[blockdevrem-select](https://gist.github.com/gromnitsky/d23d5b1760a0659b0d97b47241644fdf)
 
 ## &#x2672; Loicense
 

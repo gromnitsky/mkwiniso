@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # shellcheck disable=SC3043
 
 eh() { echo "winiso2img error: $*" 1>&2; exit 1; }
@@ -46,7 +46,7 @@ copy() {
         d=$dest_dir/${file#"$prefix"/}
         [ "$DEBUG" ] || {
             dirname "$d" | xargs -d\\n mkdir -p
-            cp -p "$file" "$d" || break 1
+            cp -p "$file" "$d" || return 1
         }
 
         [ "$V" = 0 ] || {
@@ -56,7 +56,11 @@ copy() {
     done
 }
 
-set -e
+file_size() { stat -c %s "$1"; }
+gigabytes() { awk '{s = $1/(1024*1024*1024); printf "%d\n", int(s) + (s > int(s) ? 1 : 0)}'; }
+
+# shellcheck disable=SC3040
+set -e -o pipefail
 [ "`uname -s`" = Linux ] || eh not Linux
 cc udisksctl mkfs.fat wimlib-imagex sfdisk dialog
 
@@ -70,7 +74,7 @@ trap clean 0 1 2 15
 
 # STEP 0: create an empty image and partition it
 rm -f "$dest"
-part1_size=$((1024*1024*1024 * 8))
+part1_size=$((1024*1024*1024 * `file_size "$src" | gigabytes`))
 truncate -s $((part1_size + 2048*512)) "$dest"
 
 sfdisk "$dest" << EOF > /dev/null
